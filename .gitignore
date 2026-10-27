@@ -1,8 +1,16 @@
 node_modules/
 dist/
 *.log
-.env
 .DS_Store
 
-# Config files with sensitive data (for development)
-.gsc-mcp-server/
+# Secrets: never commit these. Set them as environment variables instead.
+.env
+.env.*
+!.env.example
+client_secret*.json
+credentials*.json
+token*.json
+service-account*.json
+*.pem
+*.key
+*.p12

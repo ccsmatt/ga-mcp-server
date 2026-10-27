@@ -1,6 +1,13 @@
 node_modules
 dist
 .git
-.env
 *.log
-.gsc-mcp-server
+.env
+.env.*
+client_secret*.json
+credentials*.json
+token*.json
+service-account*.json
+*.pem
+*.key
+*.p12
