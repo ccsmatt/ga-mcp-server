@@ -1,54 +1,46 @@
 # Terms of Service
 
-**GSC MCP Server**
+**Google Analytics 4 MCP Server**
 
-Last updated: January 28, 2025
+Last updated: October 27, 2026
 
 ## Agreement
 
-By using GSC MCP Server, you agree to these terms.
+By using Google Analytics 4 MCP Server, you agree to these terms.
 
 ## Description
 
-GSC MCP Server is an open-source tool that connects MCP-compatible clients (like Claude) to your Google Search Console data.
+Google Analytics 4 MCP Server is an open-source tool that gives MCP-compatible clients (like Claude) read-only access to Google Analytics 4 data.
 
-## Use of Service
+## Use of the software
 
-You may use this software to:
-- Query your own Google Search Console data
-- Check indexing status of URLs you own
-- Manage sitemaps for sites you have access to
+You may use this software to read Google Analytics 4 data that you are authorized to view.
 
 You agree not to:
 - Use this software to access data you don't have permission to view
-- Violate Google's Terms of Service
+- Violate Google's Terms of Service or the Google Analytics Terms of Service
 - Use this software for any illegal purpose
 
-## Data and Privacy
+## Data and privacy
 
-All data is stored locally on your computer. See our [Privacy Policy](PRIVACY.md) for details.
+See the [Privacy Policy](PRIVACY.md).
 
-## Google Services
+## Google services
 
-This software uses Google Search Console API. Your use is also subject to [Google's Terms of Service](https://policies.google.com/terms).
+This software uses the Google Analytics Data API and Admin API. Your use is also subject to [Google's Terms of Service](https://policies.google.com/terms) and the [Google APIs Terms of Service](https://developers.google.com/terms).
 
-## No Warranty
+## No warranty
 
 This software is provided "as is" without warranty of any kind. Use at your own risk.
 
-## Limitation of Liability
+## Limitation of liability
 
 The developers are not liable for any damages arising from the use of this software.
 
 ## Changes
 
-We may update these terms at any time. Continued use constitutes acceptance of new terms.
+These terms may be updated at any time. Continued use constitutes acceptance of the new terms.
 
-## Open Source
+## Open source
 
-This software is open source under the MIT License. You can view and contribute to the code at:
-https://github.com/sofianbettayeb/gsc-mcp-server
-
-## Contact
-
-For questions: sofianbettayeb@gmail.com
+This software is open source under the MIT License: https://github.com/ccsmatt/ga-mcp-server

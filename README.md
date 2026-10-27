@@ -1,189 +1,178 @@
-# Google Search Console MCP Server
+# Google Analytics 4 MCP Server
 
-<img width="459" height="209" alt="image" src="https://github.com/user-attachments/assets/d0cec128-c0b3-443c-a6e7-54b63e10db71" />
+A read-only [Model Context Protocol](https://modelcontextprotocol.io) server that lets Claude query Google Analytics 4. Deploy it once (for example on Railway), add it to your Claude Team plan as a custom connector, and anyone on the team can ask things like:
 
-Connect Claude to your Google Search Console data. Query search analytics, check indexing status, and manage sitemaps through natural conversation.
+- "Which channels drove the most sessions and key events last month?"
+- "Top 20 landing pages from Organic Search in the last 28 days, with engagement rate"
+- "Compare this month's sessions by device to last month"
+- "How many people are on the site right now, and from which countries?"
 
-Runs in 2 modes:
+It is **read-only**: it only ever requests the `https://www.googleapis.com/auth/analytics.readonly` scope and has no tools that change anything in GA4.
 
-- **Remote (HTTP)**: a long-lived HTTP service you deploy anywhere, then add to claude.ai as a custom connector or to Claude Code as an HTTP MCP server. Works from web and cloud sessions.
-- **Local (stdio)**: the classic `npx gsc-mcp-server` setup for Claude Desktop on your machine.
+> Based on [ccsmatt/gsc-mcp-server](https://github.com/ccsmatt/gsc-mcp-server), a fork of [sofianbettayeb/gsc-mcp-server](https://github.com/sofianbettayeb/gsc-mcp-server) by Sofian Bettayeb (MIT). The HTTP transport and deployment setup come from that project; the Search Console tools were replaced with GA4 tools.
 
-> **Breaking change in v2**: the bundled shared OAuth client has been removed. Every deployment now needs its own Google Cloud credentials. See [Create your Google credentials](#1-create-your-google-credentials).
+## Tools
 
-## Available Tools
+| Tool | What it does |
+| --- | --- |
+| `ga_list_properties` | Lists GA4 accounts and properties the Google account can read, with property IDs |
+| `ga_get_property` | Details for one property: time zone, currency, data streams (website URL, measurement ID) |
+| `ga_run_report` | Historical report (Data API `runReport`): date ranges, dimensions, metrics, filters, sorting, row limit (default 100, max 1000) |
+| `ga_run_realtime_report` | Last 30 minutes of activity (`runRealtimeReport`) |
+| `ga_get_metadata` | Custom dimensions and metrics on a property (optionally all standard ones too) |
 
-| Tool | Description |
-|------|-------------|
-| `gsc_list_sites` | List all your Search Console properties |
-| `gsc_search_analytics` | Query clicks, impressions, CTR, and position |
-| `gsc_inspect_url` | Check if a URL is indexed |
-| `gsc_list_sitemaps` | List submitted sitemaps |
-| `gsc_get_sitemap` | Get sitemap details |
-| `gsc_submit_sitemap` | Submit a new sitemap |
-| `gsc_delete_sitemap` | Remove a sitemap |
+## How it works
 
-## 1. Create your Google credentials
+- One HTTP endpoint, `POST /mcp` (stateless streamable HTTP), plus `GET /healthz` for health checks.
+- Every `/mcp` request must carry `Authorization: Bearer <MCP_AUTH_TOKEN>`. The server **refuses to start** if `MCP_AUTH_TOKEN` is not set.
+- The server reads GA4 as **one Google account** (whoever created the refresh token). Everyone who uses the connector sees what that account can see, so use an account with Viewer access to exactly the properties your team should query.
+- All credentials come from environment variables. Nothing is written to disk.
 
-Pick one of the 2 options. Both require a Google Cloud project with the **Search Console API** enabled ([console.cloud.google.com](https://console.cloud.google.com/) > APIs & Services > Enable APIs > Search Console API).
-
-### Option A: Service account (recommended for remote deployments)
-
-No browser flow, no token expiry headaches.
-
-1. In Google Cloud Console, go to IAM & Admin > Service Accounts > Create.
-2. Create a JSON key for it and download the file.
-3. In [Google Search Console](https://search.google.com/search-console), open each property > Settings > Users and permissions > Add user, and add the service account's email (`something@project.iam.gserviceaccount.com`). Grant "Full" for sitemap management or "Restricted" for read-only analytics.
-
-Set `GSC_READ_ONLY=true` on the server if you only want the read-only Search Console scope requested.
-
-### Option B: OAuth client + refresh token
-
-Uses your own Google account's access.
-
-1. In Google Cloud Console, go to APIs & Services > Credentials > Create Credentials > OAuth client ID > **Desktop app**.
-2. Note the client ID and client secret.
-3. Get a refresh token by running the setup flow locally:
-
-```bash
-GOOGLE_CLIENT_ID=your-client-id GOOGLE_CLIENT_SECRET=your-client-secret npx gsc-mcp-server --setup
-```
-
-A browser opens for Google sign-in. When it finishes, the terminal prints the `GOOGLE_REFRESH_TOKEN` value to use in your deployment.
-
-## 2. Environment variables
+### Environment variables
 
 | Variable | Required | Description |
-|----------|----------|-------------|
-| `GOOGLE_SERVICE_ACCOUNT_KEY` | Option A | Service account key JSON, raw or base64-encoded |
-| `GOOGLE_SERVICE_ACCOUNT_KEY_FILE` | Option A (alt) | Path to the key JSON file |
-| `GOOGLE_CLIENT_ID` | Option B | OAuth client ID |
-| `GOOGLE_CLIENT_SECRET` | Option B | OAuth client secret |
-| `GOOGLE_REFRESH_TOKEN` | Option B | Refresh token from `--setup` |
-| `MCP_AUTH_TOKEN` | Strongly recommended | Shared secret MCP clients must present. Without it, anyone who can reach the server can read your GSC data |
-| `PORT` | No | HTTP listen port, default `8080` |
-| `GSC_READ_ONLY` | No | `true` to request only the read-only Search Console scope |
+| --- | --- | --- |
+| `GOOGLE_CLIENT_ID` | yes | OAuth client ID (Desktop app type) |
+| `GOOGLE_CLIENT_SECRET` | yes | OAuth client secret |
+| `GOOGLE_REFRESH_TOKEN` | yes | From `npm run setup-auth` (step 3) |
+| `MCP_AUTH_TOKEN` | yes | Long random string Claude must send as a Bearer token |
+| `PORT` | no | Listen port (default 8080; Railway sets this for you) |
 
-Service account credentials take precedence if both configurations are set.
+## 1. Google Cloud setup
 
-## 3. Remote deployment (HTTP)
+1. Go to [Google Cloud Console](https://console.cloud.google.com/) and create a project (or pick an existing one).
+2. **Enable the two APIs** (APIs & Services > Library), searching for each:
+   - **Google Analytics Data API**
+   - **Google Analytics Admin API**
+3. **Configure the OAuth consent screen** (Google Auth Platform):
+   - **Branding**: app name (e.g. "GA4 MCP"), your support email.
+   - **Audience**:
+     - If your Google account is part of a **Google Workspace** organization, choose **Internal**. Tokens don't expire and no verification is needed.
+     - Otherwise choose **External**, add yourself as a test user, then **Publish app** (set to *In production*). Apps left in *Testing* issue refresh tokens that **expire after 7 days**. An unverified production app shows an "unverified app" warning during consent; as the owner you can click *Advanced > Go to ... (unsafe)* to continue.
+   - **Data Access**: add the scope `https://www.googleapis.com/auth/analytics.readonly` (shown as ".../auth/analytics.readonly").
 
-Run it as a normal Node HTTP service:
+## 2. Create the OAuth client
 
-```bash
-npm install && npm run build
-GOOGLE_SERVICE_ACCOUNT_KEY_FILE=/path/to/key.json MCP_AUTH_TOKEN=$(openssl rand -hex 24) npm start
-```
+1. Google Auth Platform > **Clients** > **Create client**.
+2. Application type: **Desktop app**. Give it a name and click **Create**.
+3. Copy the **Client ID** and **Client secret**. Don't download the JSON into this repo (it's git-ignored, but there's no need for it).
 
-Or via npx without cloning:
+Make sure the Google account you'll sign in with has at least **Viewer** access on each GA4 property (GA4 > Admin > Property access management).
 
-```bash
-npx -p gsc-mcp-server gsc-mcp-server-http
-```
+## 3. Get a refresh token
 
-The MCP endpoint is `POST /mcp` (streamable HTTP, stateless). A health check is at `GET /healthz`.
-
-It works on any host that runs Node 18+: Railway, Render, Fly.io, Replit, or a VPS behind a reverse proxy. A `Dockerfile` is included:
-
-```bash
-docker build -t gsc-mcp-server .
-docker run -p 8080:8080 -e GOOGLE_SERVICE_ACCOUNT_KEY="$(cat key.json)" -e MCP_AUTH_TOKEN=your-secret gsc-mcp-server
-```
-
-Put it behind HTTPS. claude.ai requires an `https://` URL for custom connectors, so use your host's built-in TLS (Railway/Render/Fly/Replit all provide it) or a reverse proxy like Caddy on a VPS.
-
-### Authentication of MCP clients
-
-If `MCP_AUTH_TOKEN` is set, the server accepts either:
-
-- `Authorization: Bearer <token>` header, or
-- the token as a path segment: `https://your-host/mcp/<token>` (for clients that can't send custom headers, like claude.ai custom connectors)
-
-### Connect from claude.ai (custom connector)
-
-1. Go to claude.ai > Settings > Connectors > Add custom connector.
-2. Enter the URL: `https://your-host/mcp/<your MCP_AUTH_TOKEN>`
-3. Save. The GSC tools become available in claude.ai chats and Claude Code web/cloud sessions.
-
-### Connect from Claude Code (CLI)
+You need [Node.js 22+](https://nodejs.org/) and a copy of this repo.
 
 ```bash
-claude mcp add --transport http google-search-console https://your-host/mcp --header "Authorization: Bearer your-secret"
+git clone https://github.com/ccsmatt/ga-mcp-server.git
+cd ga-mcp-server
+npm install
 ```
 
-## 4. Local use with Claude Desktop (stdio)
+Then run the helper with your client ID and secret as environment variables.
 
-### Run setup
+PowerShell (Windows):
+
+```powershell
+$env:GOOGLE_CLIENT_ID = "your-client-id.apps.googleusercontent.com"
+$env:GOOGLE_CLIENT_SECRET = "your-client-secret"
+npm run setup-auth
+```
+
+macOS / Linux:
 
 ```bash
-GOOGLE_CLIENT_ID=your-client-id GOOGLE_CLIENT_SECRET=your-client-secret npx gsc-mcp-server --setup
+GOOGLE_CLIENT_ID="your-client-id.apps.googleusercontent.com" GOOGLE_CLIENT_SECRET="your-client-secret" npm run setup-auth
 ```
 
-Alternatively, save the OAuth client JSON downloaded from Google Cloud Console to `~/.gsc-mcp-server/credentials.json` and run `npx gsc-mcp-server --setup` without env vars.
+The script:
 
-### Add to Claude Desktop
+1. Prints a Google consent URL. Open it in an **incognito/private window** and sign in with the Google account that has GA4 access.
+2. After you approve, your browser goes to `http://localhost/?code=...` and shows a **"can't connect"** page. That's expected.
+3. Copy the full address from the address bar (or just the `code` value) and paste it into the terminal.
+4. The script prints **only the refresh token**. Copy it somewhere safe for step 5 (e.g. your password manager).
 
-Open your Claude Desktop config file:
+Nothing is written to disk. Close the terminal afterwards so the client secret isn't left in its environment.
 
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+If you get `invalid_grant`, the code expired or was already used; run it again and paste promptly.
 
-Add the server configuration:
+## 4. Choose an MCP auth token
 
-```json
-{
-  "mcpServers": {
-    "google-search-console": {
-      "command": "npx",
-      "args": ["-y", "gsc-mcp-server"]
-    }
-  }
-}
+`MCP_AUTH_TOKEN` is the password Claude uses to call your server. Generate a long random one:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-Then restart Claude Desktop.
+## 5. Deploy to Railway
 
-## Usage
+1. In [Railway](https://railway.com/), click **New Project** > **Deploy from GitHub repo** and pick `ga-mcp-server`. Railway finds the `Dockerfile` and builds with it.
+2. Open the service > **Variables** and add:
+   - `GOOGLE_CLIENT_ID`
+   - `GOOGLE_CLIENT_SECRET`
+   - `GOOGLE_REFRESH_TOKEN`
+   - `MCP_AUTH_TOKEN`
 
-Once connected, ask Claude things like:
+   Don't set `PORT`; Railway provides it.
+3. **Settings > Networking > Generate Domain** to get a public URL like `https://ga-mcp-server-production.up.railway.app`.
+4. Optional: **Settings > Deploy > Healthcheck Path** = `/healthz`.
+5. Check it: opening `https://<your-domain>/healthz` should show `{"status":"ok"}`. The deploy logs should say `ga-mcp-server listening on port ...`. If the logs say a variable is missing, fix it under **Variables** (Railway redeploys automatically).
 
-| What you want | Example prompt |
-|---------------|----------------|
-| Top search queries | "What are my top 10 search queries this month?" |
-| Page performance | "How is my /blog page performing in search?" |
-| Check indexing | "Is https://mysite.com/new-post indexed?" |
-| Compare periods | "Compare my search traffic this week vs last week" |
-| Find opportunities | "Show me queries with high impressions but low CTR" |
-| Manage sitemaps | "List my sitemaps" or "Submit my new sitemap" |
+Your MCP endpoint is `https://<your-domain>/mcp`.
+
+## 6. Add it to Claude (Team plan)
+
+An **Owner** of the Claude Team organization does this once:
+
+1. Go to [**Organization settings > Connectors**](https://claude.ai/admin-settings/connectors), select **Add**, then **Custom** (choose **Web** if asked).
+2. **Name**: e.g. "Google Analytics 4". **MCP server URL**: `https://<your-domain>/mcp`.
+3. **Authentication**: **No sign-in**.
+4. **Request headers**: choose header name `authorization`, value `Bearer <your MCP_AUTH_TOKEN>`. Type the word `Bearer`, a space, then the token; Claude sends the value exactly as entered. Mark it **Required**.
+5. Click **Add**.
+
+Team members then go to **Customize > Connectors**, find the connector with the **Custom** label and click **Connect**. In a chat, turn it on from the **+** menu > **Connectors**.
+
+> Request header authentication is in beta for a limited set of organizations. If you don't see **Request headers** in the dialog, your org doesn't have it yet, and this server (which only accepts the header) can't be added from claude.ai until it does. It still works from Claude Code, which supports headers today.
+
+To change the token later, update `MCP_AUTH_TOKEN` in Railway, then remove and re-add the connector with the new header (headers can't be edited after saving).
+
+### Claude Code (CLI)
+
+```bash
+claude mcp add --transport http ga4 https://<your-domain>/mcp --header "Authorization: Bearer <your MCP_AUTH_TOKEN>"
+```
+
+## Local development
+
+```bash
+cp .env.example .env    # fill in real values; .env is git-ignored
+npm run build
+npm start               # or: npm run dev
+```
+
+`npm start` doesn't load `.env` by itself; export the variables in your shell first (or use your editor's env support). Then check `http://localhost:8080/healthz`.
 
 ## Troubleshooting
 
-**"Permission denied" for a site?**
-Make sure the Google account (or service account) has access to that property in Search Console.
+| Message | Fix |
+| --- | --- |
+| `Permission denied (403)` | The Google account needs Viewer access on that GA4 property, or the property ID is wrong. |
+| `API is not enabled` | Enable both **Google Analytics Data API** and **Google Analytics Admin API** in the same Cloud project as the OAuth client. |
+| `invalid_grant` | Refresh token revoked or expired (7-day expiry if the consent screen is External + Testing). Re-run `npm run setup-auth` and update `GOOGLE_REFRESH_TOKEN`. |
+| `Google rejected the OAuth client` | `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` don't match the client used to create the refresh token. |
+| `401 Unauthorized` from `/mcp` | The connector isn't sending `Authorization: Bearer <MCP_AUTH_TOKEN>`, or the value doesn't match exactly (check for a missing `Bearer `). |
+| Server exits at startup | Read the deploy log: it names the missing variable. |
 
-**Server exits with "credentials required"?**
-Set the environment variables from the table above. The server no longer ships with built-in credentials.
+## Security notes
 
-**Need to re-authenticate locally?**
-Run `npx gsc-mcp-server --setup` again.
-
-**401 Unauthorized from the remote server?**
-Your client isn't presenting `MCP_AUTH_TOKEN`. Use the bearer header or put the token in the URL path.
+- Never commit `.env`, OAuth client JSON or tokens. `.gitignore` and `.dockerignore` block the usual file names.
+- The refresh token grants read access to every GA4 property the Google account can see. Store it only in Railway variables. Revoke it any time at [Google Account permissions](https://myaccount.google.com/permissions).
+- Anyone with `MCP_AUTH_TOKEN` and the URL can read that GA4 data. Rotate it if it leaks.
 
 ## Privacy
 
-See our [Privacy Policy](PRIVACY.md).
+See [PRIVACY.md](PRIVACY.md) and [TERMS.md](TERMS.md).
 
 ## License
 
-MIT
-
-## About Me
-
-I'm **Sofian Bettayeb**.
-
-By day, I'm a martech consultant, working with billion-dollar brands. By night, I build tools like **AI SEO Copilot** (15k+ installs), **AEO Copilot**, and blueprints like **Webflow SEO Checklist** (1k+ downloads) to help my Webflow friends make money with SEO and AEO.
-
-In between, I ride my bikes and play with my kids in Bern, Switzerland.
-
-[GitHub](https://github.com/sofianbettayeb)
+MIT. See [LICENSE](LICENSE). Originally derived from [gsc-mcp-server](https://github.com/sofianbettayeb/gsc-mcp-server) by Sofian Bettayeb.

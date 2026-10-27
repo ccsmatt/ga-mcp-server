@@ -1,69 +1,55 @@
 # Privacy Policy
 
-**Google Search Console MCP Server**
+**Google Analytics 4 MCP Server**
 
-Last updated: January 28, 2025
+Last updated: October 27, 2026
 
 ## Overview
 
-Google Search Console MCP Server is an open-source tool that connects Claude (and other MCP clients) to your Google Search Console data. This privacy policy explains how the application handles your data.
+Google Analytics 4 MCP Server is an open-source, self-hosted tool that connects Claude (and other MCP clients) to Google Analytics 4 data. Each deployment is run by whoever hosts it; this document describes how the software handles data.
 
-## Data Collection and Storage
+## What data is accessed
 
-### What data is accessed
-- Your Google Search Console search analytics (clicks, impressions, CTR, position)
-- URL indexing status
-- Sitemap information
-- List of sites you have access to in Search Console
+Using the read-only scope `https://www.googleapis.com/auth/analytics.readonly`, the server can read:
 
-### Where data is stored
-All data is stored **locally on your own computer**:
-- OAuth credentials: `~/.gsc-mcp-server/credentials.json`
-- Authentication token: `~/.gsc-mcp-server/token.json`
+- The GA4 accounts and properties the authorizing Google account can access
+- Property settings and data streams (e.g. time zone, currency, website URL)
+- Report data (dimensions and metrics) and realtime data requested by the MCP client
+- Custom dimension and metric definitions
 
-**No data is transmitted to or stored on any external servers.** The application runs entirely on your local machine.
+It cannot change any GA4 settings or data.
 
-## Third-Party Services
+## Where data goes
 
-This application uses:
-- **Google Search Console API** to retrieve your search data
+- Credentials (OAuth client, refresh token, MCP auth token) are supplied as environment variables on the host. The software does not write them to disk.
+- Report data is fetched from Google on request and returned directly to the MCP client that asked for it (for example Claude). The software does not store, cache or log report data.
+- Your host (e.g. Railway) and your MCP client (e.g. Claude) handle data under their own privacy policies.
+
+## Third-party services
+
+- **Google Analytics Data API and Admin API** to read analytics data
 - **Google OAuth 2.0** for authentication
 
-Your data is subject to [Google's Privacy Policy](https://policies.google.com/privacy) when accessing their services.
+Use of these services is subject to [Google's Privacy Policy](https://policies.google.com/privacy).
 
-## Data Sharing
+## Data sharing
 
-We do **not**:
-- Collect any personal information
-- Store your data on external servers
-- Share your data with third parties
-- Track your usage
-- Use analytics
+The software itself does not collect personal information, send data to the authors, track usage, or share data with third parties.
 
-## Data Security
+## Revoking access
 
-- OAuth tokens are stored with restricted file permissions (readable only by you)
-- Tokens are automatically refreshed and can be revoked at any time
-- You can delete all stored data by removing the `~/.gsc-mcp-server/` directory
+- Revoke the refresh token at [Google Account permissions](https://myaccount.google.com/permissions)
+- Remove the credentials from your host's environment variables
+- Remove the connector from your MCP client
 
-## Your Rights
+## Open source
 
-You can at any time:
-- Revoke access via [Google Account Permissions](https://myaccount.google.com/permissions)
-- Delete local credentials by removing `~/.gsc-mcp-server/`
-- Uninstall the application
-
-## Open Source
-
-This application is open source. You can review the code at:
-https://github.com/sofianbettayeb/gsc-mcp-server
+Source code: https://github.com/ccsmatt/ga-mcp-server
 
 ## Contact
 
-For questions about this privacy policy:
-- Email: sofianbettayeb@gmail.com
-- GitHub Issues: https://github.com/sofianbettayeb/gsc-mcp-server/issues
+GitHub Issues: https://github.com/ccsmatt/ga-mcp-server/issues
 
 ## Changes
 
-Any updates to this privacy policy will be reflected in this document with an updated date.
+Updates to this policy will be reflected in this document with a new date.
