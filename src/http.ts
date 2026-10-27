@@ -1,25 +1,28 @@
 #!/usr/bin/env node
 
+import { createHash, timingSafeEqual } from "crypto";
 import express, { Request, Response } from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
 import { getAuthFromEnv } from "./auth.js";
-import { GSCClient } from "./gsc-client.js";
+import { GAClient } from "./ga-client.js";
 import { createMcpServer } from "./server.js";
 
 const PORT = Number(process.env.PORT || 8080);
 const AUTH_TOKEN = process.env.MCP_AUTH_TOKEN;
 
+function sha256(value: string): Buffer {
+  return createHash("sha256").update(value).digest();
+}
+
+// Only the Authorization header is accepted; tokens in URLs leak into logs
 function isAuthorized(req: Request): boolean {
-  if (!AUTH_TOKEN) {
-    return true;
+  const header = req.headers.authorization;
+  if (!AUTH_TOKEN || !header) {
+    return false;
   }
-  if (req.headers.authorization === `Bearer ${AUTH_TOKEN}`) {
-    return true;
-  }
-  // Fallback for clients that can't send custom headers (e.g. claude.ai
-  // custom connectors): the token as a URL path segment, /mcp/<token>
-  return req.params.token === AUTH_TOKEN;
+  // Hash both sides so the comparison is constant-time regardless of length
+  return timingSafeEqual(sha256(header), sha256(`Bearer ${AUTH_TOKEN}`));
 }
 
 function unauthorized(res: Response): void {
@@ -31,38 +34,35 @@ function unauthorized(res: Response): void {
 }
 
 async function main() {
-  let auth;
-  try {
-    auth = getAuthFromEnv();
-  } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
-  }
-  if (!auth) {
+  if (!AUTH_TOKEN) {
     console.error(`
-Google Search Console MCP Server (HTTP) - credentials required
+Google Analytics 4 MCP Server - MCP_AUTH_TOKEN required
 
-Set one of these credential configurations:
+Refusing to start without MCP_AUTH_TOKEN: the server would otherwise let
+anyone who can reach it read your Google Analytics data.
 
-  Service account (recommended, GSC_READ_ONLY=true for read-only):
-    GOOGLE_SERVICE_ACCOUNT_KEY       key JSON (raw or base64), or
-    GOOGLE_SERVICE_ACCOUNT_KEY_FILE  path to the key JSON file
-
-  OAuth client + refresh token:
-    GOOGLE_CLIENT_ID
-    GOOGLE_CLIENT_SECRET
-    GOOGLE_REFRESH_TOKEN   (get one with: npx gsc-mcp-server --setup)
-
-Optional:
-  MCP_AUTH_TOKEN  shared secret required from MCP clients
-  PORT            listen port (default 8080)
-
-See https://github.com/sofianbettayeb/gsc-mcp-server#readme
+Set MCP_AUTH_TOKEN to a long random string, and send it from MCP clients
+as the header:  Authorization: Bearer <MCP_AUTH_TOKEN>
 `);
     process.exit(1);
   }
 
-  const gscClient = new GSCClient(auth);
+  const auth = getAuthFromEnv();
+  if (!auth) {
+    console.error(`
+Google Analytics 4 MCP Server - Google credentials required
+
+Set all three environment variables:
+  GOOGLE_CLIENT_ID
+  GOOGLE_CLIENT_SECRET
+  GOOGLE_REFRESH_TOKEN   (get one with: npm run setup-auth)
+
+See the README for details.
+`);
+    process.exit(1);
+  }
+
+  const gaClient = new GAClient(auth);
 
   const app = express();
   app.use(express.json({ limit: "4mb" }));
@@ -78,8 +78,8 @@ See https://github.com/sofianbettayeb/gsc-mcp-server#readme
     }
 
     // Stateless mode: a fresh Server + transport per request, all sharing
-    // one authenticated GSC client
-    const server = createMcpServer(gscClient);
+    // one authenticated GA client
+    const server = createMcpServer(gaClient);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
     });
@@ -119,18 +119,12 @@ See https://github.com/sofianbettayeb/gsc-mcp-server#readme
   };
 
   app.post("/mcp", handleMcp);
-  app.post("/mcp/:token", handleMcp);
-  app.get(["/mcp", "/mcp/:token"], methodNotAllowed);
-  app.delete(["/mcp", "/mcp/:token"], methodNotAllowed);
+  app.get("/mcp", methodNotAllowed);
+  app.delete("/mcp", methodNotAllowed);
 
   app.listen(PORT, () => {
-    console.log(`gsc-mcp-server listening on port ${PORT}`);
-    console.log(`MCP endpoint: /mcp${AUTH_TOKEN ? " (auth token required)" : " (no auth token set)"}`);
-    if (!AUTH_TOKEN) {
-      console.warn(
-        "Warning: MCP_AUTH_TOKEN is not set. Anyone who can reach this server can query your Search Console data."
-      );
-    }
+    console.log(`ga-mcp-server listening on port ${PORT}`);
+    console.log("MCP endpoint: POST /mcp (Authorization: Bearer token required)");
   });
 }
 
