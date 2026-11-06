@@ -11,6 +11,8 @@ client_secret*.json
 credentials*.json
 token*.json
 service-account*.json
+# Google Cloud's default key file name: <project-id>-<12 hex chars>.json
+*-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].json
 *.pem
 *.key
 *.p12

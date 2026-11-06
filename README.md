@@ -25,18 +25,24 @@ It is **read-only**: it only ever requests the `https://www.googleapis.com/auth/
 
 - One HTTP endpoint, `POST /mcp` (stateless streamable HTTP), plus `GET /healthz` for health checks.
 - Every `/mcp` request must carry `Authorization: Bearer <MCP_AUTH_TOKEN>`. The server **refuses to start** if `MCP_AUTH_TOKEN` is not set.
-- The server reads GA4 as **one Google account** (whoever created the refresh token). Everyone who uses the connector sees what that account can see, so use an account with Viewer access to exactly the properties your team should query.
+- The server reads GA4 as **one identity**: either a **service account** (a robot Google account) or the Google account that created the refresh token. Everyone who uses the connector sees what that identity can see, so give it Viewer access to exactly the properties your team should query.
 - All credentials come from environment variables. Nothing is written to disk.
 
 ### Environment variables
 
+Set **either** the service account variables **or** the three OAuth variables. If a service account key is set, it is used and the OAuth variables are ignored.
+
 | Variable | Required | Description |
 | --- | --- | --- |
-| `GOOGLE_CLIENT_ID` | yes | OAuth client ID (Desktop app type) |
-| `GOOGLE_CLIENT_SECRET` | yes | OAuth client secret |
-| `GOOGLE_REFRESH_TOKEN` | yes | From `npm run setup-auth` (step 3) |
+| `GOOGLE_SERVICE_ACCOUNT_KEY` | option A | Service account key JSON, raw or base64-encoded (recommended for Railway) |
+| `GOOGLE_SERVICE_ACCOUNT_KEY_FILE` | option A | Path to the key JSON file instead (used only if `GOOGLE_SERVICE_ACCOUNT_KEY` is not set) |
+| `GOOGLE_CLIENT_ID` | option B | OAuth client ID (Desktop app type) |
+| `GOOGLE_CLIENT_SECRET` | option B | OAuth client secret |
+| `GOOGLE_REFRESH_TOKEN` | option B | From `npm run setup-auth` |
 | `MCP_AUTH_TOKEN` | yes | Long random string Claude must send as a Bearer token |
 | `PORT` | no | Listen port (default 8080; Railway sets this for you) |
+
+Both options use only the read-only scope `https://www.googleapis.com/auth/analytics.readonly`.
 
 ## 1. Google Cloud setup
 
@@ -44,14 +50,57 @@ It is **read-only**: it only ever requests the `https://www.googleapis.com/auth/
 2. **Enable the two APIs** (APIs & Services > Library), searching for each:
    - **Google Analytics Data API**
    - **Google Analytics Admin API**
-3. **Configure the OAuth consent screen** (Google Auth Platform):
-   - **Branding**: app name (e.g. "GA4 MCP"), your support email.
-   - **Audience**:
-     - If your Google account is part of a **Google Workspace** organization, choose **Internal**. Tokens don't expire and no verification is needed.
-     - Otherwise choose **External**, add yourself as a test user, then **Publish app** (set to *In production*). Apps left in *Testing* issue refresh tokens that **expire after 7 days**. An unverified production app shows an "unverified app" warning during consent; as the owner you can click *Advanced > Go to ... (unsafe)* to continue.
-   - **Data Access**: add the scope `https://www.googleapis.com/auth/analytics.readonly` (shown as ".../auth/analytics.readonly").
 
-## 2. Create the OAuth client
+Then follow **either** option A or option B.
+
+### Which option?
+
+- **Option A: service account (recommended).** No consent screen, no Google app verification, and the key doesn't expire after 7 days. You add the service account's email as a Viewer on each GA4 property, the same way you'd add a person. This is the way to go if your main Google account is a **personal Gmail** account: there, an unverified OAuth app is either blocked or limited to 7-day tokens.
+- **Option B: OAuth refresh token.** Signs in as a real Google account, so it sees every property that account can see without adding anything in GA4. Best if your account is part of a **Google Workspace** organization (consent screen set to *Internal*).
+
+## 2A. Option A: service account
+
+1. In Google Cloud Console, go to **IAM & Admin > Service Accounts > Create service account**.
+   - Name: e.g. `ga4-mcp`. Click **Create and continue**.
+   - Skip the optional "grant access" steps (it needs no Cloud roles) and click **Done**.
+2. Copy the service account's **email** (looks like `ga4-mcp@your-project.iam.gserviceaccount.com`).
+3. Open the service account > **Keys > Add key > Create new key > JSON > Create**. A `.json` key file downloads.
+   - Save it **outside** this repo folder (e.g. your password manager), never commit it.
+   - If key creation is blocked with an organization policy error (`iam.disableServiceAccountKeyCreation`), an organization admin has to allow keys for this project.
+4. **Give it access in GA4.** For each property (or once per GA4 account to cover all its properties): GA4 **Admin > Property access management** (or **Account access management**) > **+ > Add users**, paste the service account email, choose role **Viewer**, untick *Notify new users by email*, click **Add**.
+5. **Turn the key into one line for Railway.** Base64-encode the file and copy it to the clipboard:
+
+   PowerShell (Windows):
+
+   ```powershell
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\key.json")) | Set-Clipboard
+   ```
+
+   macOS:
+
+   ```bash
+   base64 -i /path/to/key.json | tr -d '\n' | pbcopy
+   ```
+
+   You'll paste this as `GOOGLE_SERVICE_ACCOUNT_KEY` in step 5. (Raw JSON also works, but base64 avoids problems with the line breaks in the private key.)
+
+Then skip to [step 4](#4-choose-an-mcp-auth-token).
+
+To revoke access later, delete the key (or the whole service account) in Google Cloud, or remove its email from GA4.
+
+## 2B. Option B: OAuth refresh token
+
+### Configure the OAuth consent screen
+
+In Google Auth Platform:
+
+- **Branding**: app name (e.g. "GA4 MCP"), your support email.
+- **Audience**:
+  - If your Google account is part of a **Google Workspace** organization, choose **Internal**. Tokens don't expire and no verification is needed.
+  - Otherwise choose **External**, add yourself as a test user, then **Publish app** (set to *In production*). Apps left in *Testing* issue refresh tokens that **expire after 7 days**. An unverified production app shows an "unverified app" warning during consent; as the owner you can click *Advanced > Go to ... (unsafe)* to continue. Some personal Gmail accounts instead get a hard **"This app is blocked"** page; if that happens, use option A.
+- **Data Access**: add the scope `https://www.googleapis.com/auth/analytics.readonly` (shown as ".../auth/analytics.readonly").
+
+### Create the OAuth client
 
 1. Google Auth Platform > **Clients** > **Create client**.
 2. Application type: **Desktop app**. Give it a name and click **Create**.
@@ -59,7 +108,7 @@ It is **read-only**: it only ever requests the `https://www.googleapis.com/auth/
 
 Make sure the Google account you'll sign in with has at least **Viewer** access on each GA4 property (GA4 > Admin > Property access management).
 
-## 3. Get a refresh token
+### Get a refresh token
 
 You need [Node.js 22+](https://nodejs.org/) and a copy of this repo.
 
@@ -108,15 +157,14 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 1. In [Railway](https://railway.com/), click **New Project** > **Deploy from GitHub repo** and pick `ga-mcp-server`. Railway finds the `Dockerfile` and builds with it.
 2. Open the service > **Variables** and add:
-   - `GOOGLE_CLIENT_ID`
-   - `GOOGLE_CLIENT_SECRET`
-   - `GOOGLE_REFRESH_TOKEN`
    - `MCP_AUTH_TOKEN`
+   - Option A: `GOOGLE_SERVICE_ACCOUNT_KEY` (the base64 text from step 2A)
+   - Option B: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`
 
-   Don't set `PORT`; Railway provides it.
+   Don't set `PORT`; Railway provides it. If you switch from option B to A, delete the three OAuth variables so it's clear which one is in use.
 3. **Settings > Networking > Generate Domain** to get a public URL like `https://ga-mcp-server-production.up.railway.app`.
 4. Optional: **Settings > Deploy > Healthcheck Path** = `/healthz`.
-5. Check it: opening `https://<your-domain>/healthz` should show `{"status":"ok"}`. The deploy logs should say `ga-mcp-server listening on port ...`. If the logs say a variable is missing, fix it under **Variables** (Railway redeploys automatically).
+5. Check it: opening `https://<your-domain>/healthz` should show `{"status":"ok"}`. The deploy logs should say `ga-mcp-server listening on port ...` and `Google credentials: service account <email>` (or `OAuth refresh token`). If the logs say a variable is missing, fix it under **Variables** (Railway redeploys automatically).
 
 Your MCP endpoint is `https://<your-domain>/mcp`.
 
@@ -156,16 +204,21 @@ npm start               # or: npm run dev
 
 | Message | Fix |
 | --- | --- |
-| `Permission denied (403)` | The Google account needs Viewer access on that GA4 property, or the property ID is wrong. |
-| `API is not enabled` | Enable both **Google Analytics Data API** and **Google Analytics Admin API** in the same Cloud project as the OAuth client. |
-| `invalid_grant` | Refresh token revoked or expired (7-day expiry if the consent screen is External + Testing). Re-run `npm run setup-auth` and update `GOOGLE_REFRESH_TOKEN`. |
+| `Permission denied (403)` | The Google account or service account email needs Viewer access on that GA4 property, or the property ID is wrong. |
+| `ga_list_properties` returns no accounts | Service account: its email hasn't been added to any GA4 property or account yet (step 2A.4). |
+| `API is not enabled` | Enable both **Google Analytics Data API** and **Google Analytics Admin API** in the same Cloud project as the service account or OAuth client. |
+| `not valid service account JSON` at startup | `GOOGLE_SERVICE_ACCOUNT_KEY` was pasted incompletely. Re-copy the whole base64 text (or the whole JSON file). |
+| `Google rejected the service account key` | The key was deleted or disabled. Create a new key and update `GOOGLE_SERVICE_ACCOUNT_KEY`. |
+| `invalid_grant` | Refresh token revoked or expired (7-day expiry if the consent screen is External + Testing). Re-run `npm run setup-auth` and update `GOOGLE_REFRESH_TOKEN`, or switch to option A. |
+| "This app is blocked" during `setup-auth` | Google blocked the unverified OAuth app for this account. Use option A (service account). |
 | `Google rejected the OAuth client` | `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` don't match the client used to create the refresh token. |
 | `401 Unauthorized` from `/mcp` | The connector isn't sending `Authorization: Bearer <MCP_AUTH_TOKEN>`, or the value doesn't match exactly (check for a missing `Bearer `). |
 | Server exits at startup | Read the deploy log: it names the missing variable. |
 
 ## Security notes
 
-- Never commit `.env`, OAuth client JSON or tokens. `.gitignore` and `.dockerignore` block the usual file names.
+- Never commit `.env`, service account keys, OAuth client JSON or tokens. `.gitignore` and `.dockerignore` block the usual file names, but keep key files outside the repo folder anyway.
+- The service account key grants read access to every GA4 property its email has been added to. Store it only in Railway variables (and your password manager). Revoke it any time by deleting the key in Google Cloud.
 - The refresh token grants read access to every GA4 property the Google account can see. Store it only in Railway variables. Revoke it any time at [Google Account permissions](https://myaccount.google.com/permissions).
 - Anyone with `MCP_AUTH_TOKEN` and the URL can read that GA4 data. Rotate it if it leaks.
 
