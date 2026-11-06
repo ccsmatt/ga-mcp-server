@@ -2,7 +2,7 @@ import { v1beta as adminV1beta } from "@google-analytics/admin";
 import type { protos as adminProtos } from "@google-analytics/admin";
 import { v1beta as dataV1beta } from "@google-analytics/data";
 import { protos as dataProtos } from "@google-analytics/data";
-import { OAuth2Client } from "google-auth-library";
+import { JWT, OAuth2Client } from "google-auth-library";
 
 // Use the stable v1beta APIs (the packages' default Admin export is v1alpha)
 const { AnalyticsAdminServiceClient } = adminV1beta;
@@ -155,8 +155,10 @@ function flattenRows(
 export class GAClient {
   private admin: AnalyticsAdminServiceClient;
   private data: BetaAnalyticsDataClient;
+  readonly usesServiceAccount: boolean;
 
   constructor(auth: OAuth2Client) {
+    this.usesServiceAccount = auth instanceof JWT;
     this.admin = new AnalyticsAdminServiceClient({ authClient: auth });
     this.data = new BetaAnalyticsDataClient({ authClient: auth });
   }
@@ -311,13 +313,16 @@ export class GAClient {
  * gRPC status codes: 3 INVALID_ARGUMENT, 5 NOT_FOUND, 7 PERMISSION_DENIED,
  * 8 RESOURCE_EXHAUSTED, 16 UNAUTHENTICATED.
  */
-export function friendlyGoogleError(error: unknown): string {
+export function friendlyGoogleError(error: unknown, usesServiceAccount = false): string {
   const err = error as { code?: number | string; message?: string; details?: string };
   const message = err?.message || String(error);
   const lower = message.toLowerCase();
 
   if (lower.includes("invalid_grant")) {
-    return "Google rejected the refresh token (invalid_grant). It may have been revoked, expired (tokens from OAuth apps in 'Testing' status expire after 7 days), or created with a different OAuth client. Run `npm run setup-auth` again and update GOOGLE_REFRESH_TOKEN.";
+    if (usesServiceAccount) {
+      return `Google rejected the service account key (${message}). The key may have been deleted or disabled in Google Cloud; create a new key and update GOOGLE_SERVICE_ACCOUNT_KEY.`;
+    }
+    return "Google rejected the refresh token (invalid_grant). It may have been revoked, expired (tokens from OAuth apps in 'Testing' status expire after 7 days), or created with a different OAuth client. Run `npm run setup-auth` again and update GOOGLE_REFRESH_TOKEN, or switch to a service account.";
   }
   if (lower.includes("invalid_client") || lower.includes("unauthorized_client")) {
     return "Google rejected the OAuth client. Check that GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET match the client the refresh token was created with.";
@@ -329,10 +334,10 @@ export function friendlyGoogleError(error: unknown): string {
   switch (err?.code) {
     case 7:
     case 403:
-      return `Permission denied (403). The Google account behind this server needs at least Viewer access on this GA4 property (GA4 Admin > Property access management). Double-check the property ID too. Details: ${message}`;
+      return `Permission denied (403). The Google account or service account email behind this server needs at least Viewer access on this GA4 property (GA4 Admin > Property access management). Double-check the property ID too. Details: ${message}`;
     case 16:
     case 401:
-      return `Google authentication failed (401). The refresh token may be revoked or invalid; run \`npm run setup-auth\` again and update GOOGLE_REFRESH_TOKEN. Details: ${message}`;
+      return `Google authentication failed (401). The refresh token or service account key may be revoked or invalid; update GOOGLE_REFRESH_TOKEN (via \`npm run setup-auth\`) or GOOGLE_SERVICE_ACCOUNT_KEY. Details: ${message}`;
     case 5:
     case 404:
       return `Not found. Check the property ID (use ga_list_properties to see valid IDs). Details: ${message}`;

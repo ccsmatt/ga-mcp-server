@@ -4,7 +4,7 @@ import { createHash, timingSafeEqual } from "crypto";
 import express, { Request, Response } from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
-import { getAuthFromEnv } from "./auth.js";
+import { describeAuth, getAuthFromEnv } from "./auth.js";
 import { GAClient } from "./ga-client.js";
 import { createMcpServer } from "./server.js";
 
@@ -47,15 +47,27 @@ as the header:  Authorization: Bearer <MCP_AUTH_TOKEN>
     process.exit(1);
   }
 
-  const auth = getAuthFromEnv();
+  let auth;
+  try {
+    auth = getAuthFromEnv();
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
   if (!auth) {
     console.error(`
 Google Analytics 4 MCP Server - Google credentials required
 
-Set all three environment variables:
-  GOOGLE_CLIENT_ID
-  GOOGLE_CLIENT_SECRET
-  GOOGLE_REFRESH_TOKEN   (get one with: npm run setup-auth)
+Set one of these credential configurations:
+
+  Service account (recommended; add its email as a Viewer on each GA4 property):
+    GOOGLE_SERVICE_ACCOUNT_KEY       key JSON (raw or base64), or
+    GOOGLE_SERVICE_ACCOUNT_KEY_FILE  path to the key JSON file
+
+  OAuth client + refresh token:
+    GOOGLE_CLIENT_ID
+    GOOGLE_CLIENT_SECRET
+    GOOGLE_REFRESH_TOKEN   (get one with: npm run setup-auth)
 
 See the README for details.
 `);
@@ -125,6 +137,7 @@ See the README for details.
   app.listen(PORT, () => {
     console.log(`ga-mcp-server listening on port ${PORT}`);
     console.log("MCP endpoint: POST /mcp (Authorization: Bearer token required)");
+    console.log(`Google credentials: ${describeAuth(auth)}`);
   });
 }
 

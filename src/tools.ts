@@ -282,7 +282,7 @@ export async function handleToolCall(
         if (accounts.length === 0) {
           return textResult({
             accounts: [],
-            note: "No GA4 accounts found. The Google account behind this server needs at least Viewer access on the GA4 properties you want to query.",
+            note: "No GA4 accounts found. The Google account or service account email behind this server needs at least Viewer access on the GA4 properties you want to query.",
           });
         }
         return textResult({ accounts });
@@ -323,7 +323,7 @@ export async function handleToolCall(
     const message =
       error instanceof z.ZodError
         ? `Invalid arguments: ${error.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; ")}`
-        : friendlyGoogleError(error);
+        : friendlyGoogleError(error, client.usesServiceAccount);
     return {
       content: [
         {
